@@ -11,7 +11,13 @@ services:
         value: production
       - key: PORT
         value: "3000"
+      - key: DISCORD_BOT_TOKEN
+        sync: false
+      - key: DISCORD_CLIENT_ID
+        value: "1521929486596047029"
       - key: OPENROUTER_API_KEYS
-        value: ""
+        sync: false
       - key: STABLE_HORDE_API_KEY
         value: "3nJ90uHuIMIHrjvBLKK5tA"
+      - key: DATABASE_URL
+        value: "postgresql://bot_msrm_user:EvnfS4kpaGyINtCRFKe0y6RmitV4Yxoz@dpg-d94ecbkvikkc73c808n0-a.frankfurt-postgres.render.com/bot_msrm"
