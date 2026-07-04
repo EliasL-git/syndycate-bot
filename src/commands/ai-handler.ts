@@ -188,6 +188,7 @@ async function generateImage(
   // 4. Poll for completion (max 5 min)
   let lastQueue = -1;
   let lastWait = -1;
+  let lastUpdate = 0;
   const maxAttempts = 60;
 
   for (let i = 0; i < maxAttempts; i++) {
@@ -236,14 +237,19 @@ async function generateImage(
       throw new Error("Generation faulted on the Horde");
     }
 
-    // Progress — unix ETA, only update embed when values change
+    // Progress — unix ETA, update every 60s OR when values change
     const queue = checkData.queue_position ?? 0;
     const wait = checkData.wait_time ?? 0;
     const etaUnix = unixEtaFromNow(wait);
+    const now = Date.now();
 
-    if (queue !== lastQueue || wait !== lastWait) {
+    const changed = queue !== lastQueue || wait !== lastWait;
+    const minuteElapsed = now - lastUpdate >= 60_000;
+
+    if (changed || minuteElapsed) {
       lastQueue = queue;
       lastWait = wait;
+      lastUpdate = now;
 
       // Update DB ETA
       await updateJobStatus(jobId, "processing", { etaUnix });
