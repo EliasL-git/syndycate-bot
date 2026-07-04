@@ -1,0 +1,17 @@
+services:
+  - type: web
+    name: syndycate-bot
+    runtime: docker
+    plan: free
+    region: frankfurt
+    autoDeploy: yes
+    dockerfilePath: ./Dockerfile
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: PORT
+        value: "3000"
+      - key: OPENROUTER_API_KEYS
+        value: ""
+      - key: STABLE_HORDE_API_KEY
+        value: "3nJ90uHuIMIHrjvBLKK5tA"
