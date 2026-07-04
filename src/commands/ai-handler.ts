@@ -334,9 +334,16 @@ export async function handleSlashImage(
     const attachment = new AttachmentBuilder(buffer, {
       name: "syndycate-image.png",
     });
-    await interaction.editReply({
-      content: `${prompt}\n-# kudos spent: ${kudosCost}`,
+    const imageMsg = await interaction.editReply({
+      content: prompt,
       files: [attachment],
+    });
+
+    // Ping the user with a link to the image message
+    const link = `https://discord.com/channels/${interaction.guildId ?? "@me"}/${interaction.channelId}/${imageMsg.id}`;
+    await interaction.followUp({
+      content: `<@${userId}> 🖼️ Your image is generated! View it at ${link}\n-# kudos spent: ${kudosCost}`,
+      allowedMentions: { users: [userId] },
     });
   } catch (err: any) {
     await interaction.editReply(`Error generating image: ${err.message}`);
@@ -495,25 +502,43 @@ async function resumeSingleJob(
                 name: "syndycate-image.png",
               });
 
-              // Update the progress message with the final image (or send new)
+              // Build the message link
+              const guildId = channel.guild?.id ?? "@me";
+
               if (progressMsgId) {
                 try {
                   const existingMsg = await channel.messages.fetch(progressMsgId);
                   await existingMsg.edit({
-                    content: `<@${job.userId}> Your image is ready!\n${job.prompt}\n-# kudos earned: ${finalKudos} (resumed after reboot)`,
+                    content: `${job.prompt}`,
                     files: [attachment],
                   });
-                } catch {
-                  // Message deleted or不可 — send new
+                  // Ping user with link
+                  const link = `https://discord.com/channels/${guildId}/${job.channelId}/${progressMsgId}`;
                   await channel.send({
-                    content: `<@${job.userId}> Your image is ready!\n${job.prompt}\n-# kudos earned: ${finalKudos} (resumed after reboot)`,
+                    content: `<@${job.userId}> 🖼️ Your image is generated! View it at ${link}\n-# kudos earned: ${finalKudos} (resumed after reboot)`,
+                    allowedMentions: { users: [job.userId] },
+                  });
+                } catch {
+                  // Message deleted — send new
+                  const newMsg = await channel.send({
+                    content: `${job.prompt}`,
                     files: [attachment],
+                  });
+                  const link = `https://discord.com/channels/${guildId}/${job.channelId}/${newMsg.id}`;
+                  await channel.send({
+                    content: `<@${job.userId}> 🖼️ Your image is generated! View it at ${link}\n-# kudos earned: ${finalKudos} (resumed after reboot)`,
+                    allowedMentions: { users: [job.userId] },
                   });
                 }
               } else {
-                await channel.send({
-                  content: `<@${job.userId}> Your image is ready!\n${job.prompt}\n-# kudos earned: ${finalKudos} (resumed after reboot)`,
+                const newMsg = await channel.send({
+                  content: `${job.prompt}`,
                   files: [attachment],
+                });
+                const link = `https://discord.com/channels/${guildId}/${job.channelId}/${newMsg.id}`;
+                await channel.send({
+                  content: `<@${job.userId}> 🖼️ Your image is generated! View it at ${link}\n-# kudos earned: ${finalKudos} (resumed after reboot)`,
+                  allowedMentions: { users: [job.userId] },
                 });
               }
             }
@@ -606,22 +631,29 @@ export function buildPrefixHandler() {
 
       const reply = await msg.channel.send({ content: "⚡ Generating image..." });
       try {
-        const { buffer, kudosCost } = await generateImage(
-          img[1],
-          undefined,
-          userId,
-          msg.channel.id,
-          async (progressMsg) => {
-            await reply.edit(progressMsg).catch(() => {});
-          },
-        );
-        const attachment = new AttachmentBuilder(buffer, {
-          name: "syndycate-image.png",
-        });
-        await reply.edit({
-          content: `${img[1]}\n-# kudos spent: ${kudosCost}`,
-          files: [attachment],
-        });
+      const { buffer, kudosCost } = await generateImage(
+        img[1],
+        undefined,
+        userId,
+        msg.channel.id,
+        async (progressMsg) => {
+          await reply.edit(progressMsg).catch(() => {});
+        },
+      );
+      const attachment = new AttachmentBuilder(buffer, {
+        name: "syndycate-image.png",
+      });
+      await reply.edit({
+        content: img[1],
+        files: [attachment],
+      });
+
+      // Ping the user with a link to the image message
+      const link = `https://discord.com/channels/${msg.guildId ?? "@me"}/${msg.channel.id}/${reply.id}`;
+      await msg.channel.send({
+        content: `<@${userId}> 🖼️ Your image is generated! View it at ${link}\n-# kudos spent: ${kudosCost}`,
+        allowedMentions: { users: [userId] },
+      });
       } catch (err: any) {
         await reply.edit(`Error: ${err.message}`);
       } finally {
