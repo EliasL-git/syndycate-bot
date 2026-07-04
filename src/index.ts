@@ -12,7 +12,7 @@ import {
   resumeImageSessions,
 } from "./commands/ai-handler";
 import { initDB } from "./services/Database";
-import { startBalancePolling } from "./services/KudosManager";
+import { initKudos } from "./services/KudosManager";
 
 const applicationId = process.env.DISCORD_CLIENT_ID!;
 const ALL_COMMANDS = [AI_COMMAND, IMAGE_COMMAND, STATS_COMMAND];
@@ -61,11 +61,9 @@ async function main() {
 
   // Init DB + key rotation
   await initDB();
+  await initKudos();
   const { loaded, healthy } = ai.bootstrap();
   console.log(`[Bootstrap] FreeAI loaded=${loaded} healthy=${healthy}`);
-
-  // Start kudos balance polling
-  startBalancePolling();
 
   client.on("ready", async () => {
     console.log(`[Discord] Logged in as ${client.user?.tag}`);

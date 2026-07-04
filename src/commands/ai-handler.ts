@@ -22,7 +22,7 @@ import {
 import { ai } from "../services/OpenAIService";
 import { rateLimiter } from "../engine/RateLimiter";
 import { STABLE_HORDE_BASE, STABLE_HORDE_KEY } from "../engine/HordeClient";
-import { calculateBid, getKudosBalance } from "../services/KudosManager";
+import { calculateBid, getKudosBalance, recordGeneration, recordBid } from "../services/KudosManager";
 import {
   createJob,
   updateJobStatus,
@@ -98,6 +98,21 @@ function humanDuration(seconds: number): string {
   return s > 0 ? `${m}m ${s}s` : `${m}m`;
 }
 
+// ── Per-user image lock ──────────────────────────────────────────────────────
+// Prevents the same user from spamming multiple concurrent image requests.
+
+const activeImageUsers = new Set<string>();
+
+function tryLock(userId: string): boolean {
+  if (activeImageUsers.has(userId)) return false;
+  activeImageUsers.add(userId);
+  return true;
+}
+
+function unlock(userId: string): void {
+  activeImageUsers.delete(userId);
+}
+
 // ── Image Generation ─────────────────────────────────────────────────────────
 
 interface GenerateResult {
@@ -114,8 +129,8 @@ async function generateImage(
   onProgress?: (msg: string) => void,
 ): Promise<GenerateResult> {
   // 1. Decide kudos bid based on our balance
-  const kudosBid = await calculateBid();
-  const balance = await getKudosBalance();
+  const kudosBid = calculateBid();
+  const balance = getKudosBalance();
 
   console.log(
     `[Horde] Generating — balance: ${balance}, bid: ${kudosBid}, model: ${model ?? "default"}`,
@@ -205,11 +220,12 @@ async function generateImage(
 
       const finalKudos = checkData.kudos ?? kudosCost;
 
-      // Update DB
+      // Update DB + track kudos earned from this generation
       await updateJobStatus(jobId, "done", {
         kudosCost: finalKudos,
         imageUrl,
       });
+      await recordGeneration(finalKudos);
 
       return { buffer, kudosCost: finalKudos, imageUrl };
     }
@@ -288,6 +304,14 @@ export async function handleSlashImage(
     return;
   }
 
+  if (!tryLock(userId)) {
+    await interaction.reply({
+      content: "⏳ You already have an image generating. Wait for it to finish!",
+      ephemeral: true,
+    });
+    return;
+  }
+
   await interaction.deferReply();
   const prompt = interaction.options.getString("prompt", true)!;
   const model = interaction.options.getString("model", false) ?? undefined;
@@ -312,6 +336,8 @@ export async function handleSlashImage(
     });
   } catch (err: any) {
     await interaction.editReply(`Error generating image: ${err.message}`);
+  } finally {
+    unlock(userId);
   }
 }
 
@@ -324,7 +350,7 @@ export async function handleSlashStats(
 
   try {
     const [balance, jobStats, hordeHealth] = await Promise.all([
-      getKudosBalance(),
+      Promise.resolve(getKudosBalance()),
       getJobStats(),
       fetch(`${STABLE_HORDE_BASE}/status/heartbeat`)
         .then((r) => r.json())
@@ -406,6 +432,8 @@ async function resumeSingleJob(
   job: { jobId: string; userId: string; channelId: string; prompt: string },
   client: any,
 ): Promise<void> {
+  // Lock this user so they can't queue another while we're resuming
+  tryLock(job.userId);
   const maxAttempts = 60;
 
   for (let i = 0; i < maxAttempts; i++) {
@@ -428,13 +456,15 @@ async function resumeSingleJob(
           const imageUrl = img.img.startsWith("http")
             ? img.img.split("?")[0]
             : "";
+          const finalKudos = checkData.kudos ?? 0;
 
           await updateJobStatus(job.jobId, "done", {
-            kudosCost: checkData.kudos ?? 0,
+            kudosCost: finalKudos,
             imageUrl,
           });
+          await recordGeneration(finalKudos);
 
-          // Try to deliver the image to the original channel
+          // Deliver the image to the original channel
           try {
             const channel = await client.channels.fetch(job.channelId);
             if (channel?.isTextBased()) {
@@ -446,7 +476,7 @@ async function resumeSingleJob(
                 name: "syndycate-image.png",
               });
               await channel.send({
-                content: `<@${job.userId}> Your image is ready!\n${job.prompt}\n-# (resumed after reboot)`,
+                content: `<@${job.userId}> Your image is ready!\n${job.prompt}\n-# kudos earned: ${finalKudos} (resumed after reboot)`,
                 files: [attachment],
               });
             }
@@ -456,11 +486,13 @@ async function resumeSingleJob(
         } else {
           await updateJobStatus(job.jobId, "faulted");
         }
+        unlock(job.userId);
         return;
       }
 
       if (checkData.faulted) {
         await updateJobStatus(job.jobId, "faulted");
+        unlock(job.userId);
         return;
       }
 
@@ -473,6 +505,7 @@ async function resumeSingleJob(
   }
 
   await updateJobStatus(job.jobId, "timeout");
+  unlock(job.userId);
 }
 
 // ── Prefix Handler ───────────────────────────────────────────────────────────
@@ -511,6 +544,12 @@ export function buildPrefixHandler() {
         await msg.reply(formatRateLimit(limit.retryAfterMs!));
         return;
       }
+
+      if (!tryLock(userId)) {
+        await msg.reply("⏳ You already have an image generating. Wait for it to finish!");
+        return;
+      }
+
       const reply = await msg.channel.send({ content: "⚡ Generating image..." });
       try {
         const { buffer, kudosCost } = await generateImage(
@@ -531,16 +570,16 @@ export function buildPrefixHandler() {
         });
       } catch (err: any) {
         await reply.edit(`Error: ${err.message}`);
+      } finally {
+        unlock(userId);
       }
     }
 
     // !stats (prefix version)
     if (/^!stats$/i.test(trimmed)) {
       try {
-        const [balance, jobStats] = await Promise.all([
-          getKudosBalance(),
-          getJobStats(),
-        ]);
+        const balance = getKudosBalance();
+        const jobStats = await getJobStats();
         await msg.reply(
           [
             `**⚡ Syndycate Stats**`,
