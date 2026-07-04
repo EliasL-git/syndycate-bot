@@ -27,9 +27,10 @@ CREATE TABLE IF NOT EXISTS image_jobs (
   model         TEXT,
   status        TEXT NOT NULL DEFAULT 'pending',  -- pending | processing | done | faulted | timeout
   kudos_cost    INTEGER DEFAULT 0,
-  image_url     TEXT,                         -- final R2 URL when done
-  eta_unix      BIGINT,                      -- estimated completion (unix ts)
-  created_at    TIMESTAMPTZ DEFAULT NOW(),
+  image_url      TEXT,                         -- final R2 URL when done
+  eta_unix       BIGINT,                      -- estimated completion (unix ts)
+  resume_msg_id  TEXT,                         -- Discord message ID for live updates
+  created_at     TIMESTAMPTZ DEFAULT NOW(),
   completed_at  TIMESTAMPTZ
 );
 
@@ -167,6 +168,10 @@ export async function getKudosTrend(): Promise<{ balance: number; recordedAt: Da
 }
 
 // ── Pool util ────────────────────────────────────────────────────────────────
+
+export async function updateResumeMsgId(jobId: string, msgId: string): Promise<void> {
+  await pool.query(`UPDATE image_jobs SET resume_msg_id = $1 WHERE job_id = $2`, [msgId, jobId]);
+}
 
 export async function closeDB(): Promise<void> {
   await pool.end();

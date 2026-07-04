@@ -29,6 +29,7 @@ import {
   getActiveJobs,
   getJobStats,
   initDB,
+  updateResumeMsgId,
 } from "../services/Database";
 
 // ── Slash Command Definitions ────────────────────────────────────────────────
@@ -247,7 +248,10 @@ async function generateImage(
       // Update DB ETA
       await updateJobStatus(jobId, "processing", { etaUnix });
 
-      const bidLabel = kudosBid > 0 ? `⚡ kudos: ${kudosBid}` : "🔓 anonymous";
+      const isRegistered = STABLE_HORDE_KEY !== "0000000000";
+      const bidLabel = isRegistered
+        ? `🔑 registered (bid: ${kudosBid})`
+        : `🔓 anonymous`;
       onProgress?.(
         `Generating... <t:${etaUnix}:R> (queue: #${queue}, ETA: <t:${etaUnix}:f>)\n${bidLabel}`,
       );
@@ -429,12 +433,28 @@ export async function resumeImageSessions(
 }
 
 async function resumeSingleJob(
-  job: { jobId: string; userId: string; channelId: string; prompt: string },
+  job: { jobId: string; userId: string; channelId: string; prompt: string; resumeMsgId?: string | null },
   client: any,
 ): Promise<void> {
   // Lock this user so they can't queue another while we're resuming
   tryLock(job.userId);
   const maxAttempts = 60;
+
+  // Send initial progress message to the channel
+  let progressMsgId = job.resumeMsgId ?? null;
+  try {
+    const channel = await client.channels.fetch(job.channelId);
+    if (channel?.isTextBased()) {
+      const msg = await channel.send({
+        content: `🔄 Resuming generation for <@${job.userId}>...\n${job.prompt}`,
+      });
+      progressMsgId = msg.id;
+      // Store the message ID so we can edit it on next boot too
+      await updateResumeMsgId(job.jobId, progressMsgId!);
+    }
+  } catch {
+    console.warn(`[Resume] Could not send initial progress for ${job.jobId}`);
+  }
 
   for (let i = 0; i < maxAttempts; i++) {
     await new Promise((r) => setTimeout(r, 5_000));
@@ -464,7 +484,6 @@ async function resumeSingleJob(
           });
           await recordGeneration(finalKudos);
 
-          // Deliver the image to the original channel
           try {
             const channel = await client.channels.fetch(job.channelId);
             if (channel?.isTextBased()) {
@@ -475,10 +494,28 @@ async function resumeSingleJob(
               const attachment = new AttachmentBuilder(buffer, {
                 name: "syndycate-image.png",
               });
-              await channel.send({
-                content: `<@${job.userId}> Your image is ready!\n${job.prompt}\n-# kudos earned: ${finalKudos} (resumed after reboot)`,
-                files: [attachment],
-              });
+
+              // Update the progress message with the final image (or send new)
+              if (progressMsgId) {
+                try {
+                  const existingMsg = await channel.messages.fetch(progressMsgId);
+                  await existingMsg.edit({
+                    content: `<@${job.userId}> Your image is ready!\n${job.prompt}\n-# kudos earned: ${finalKudos} (resumed after reboot)`,
+                    files: [attachment],
+                  });
+                } catch {
+                  // Message deleted or不可 — send new
+                  await channel.send({
+                    content: `<@${job.userId}> Your image is ready!\n${job.prompt}\n-# kudos earned: ${finalKudos} (resumed after reboot)`,
+                    files: [attachment],
+                  });
+                }
+              } else {
+                await channel.send({
+                  content: `<@${job.userId}> Your image is ready!\n${job.prompt}\n-# kudos earned: ${finalKudos} (resumed after reboot)`,
+                  files: [attachment],
+                });
+              }
             }
           } catch {
             console.warn(`[Resume] Could not deliver job ${job.jobId} to channel ${job.channelId}`);
@@ -496,9 +533,26 @@ async function resumeSingleJob(
         return;
       }
 
-      // Update ETA
       const etaUnix = unixEtaFromNow(checkData.wait_time ?? 0);
       await updateJobStatus(job.jobId, "processing", { etaUnix });
+
+      // Update the progress message in Discord
+      if (progressMsgId) {
+        try {
+          const channel = await client.channels.fetch(job.channelId);
+          if (channel?.isTextBased()) {
+            const existingMsg = await channel.messages.fetch(progressMsgId);
+            const bidLabel = STABLE_HORDE_KEY !== "0000000000"
+              ? `🔑 registered`
+              : `🔓 anonymous`;
+            await existingMsg.edit({
+              content: `🔄 Resuming... <t:${etaUnix}:R> (queue: #${checkData.queue_position ?? "?"}, ETA: <t:${etaUnix}:f>)\n${job.prompt}\n-# ${bidLabel}`,
+            }).catch(() => {});
+          }
+        } catch {
+          // Channel/message gone — continue polling, deliver at end
+        }
+      }
     } catch (err: any) {
       console.warn(`[Resume] Poll error for ${job.jobId}: ${err.message}`);
     }

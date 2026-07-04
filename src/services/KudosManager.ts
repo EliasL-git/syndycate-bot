@@ -67,7 +67,9 @@ export async function recordBid(kudosSpent: number): Promise<void> {
 
 export function calculateBid(): number {
   const balance = cachedBalance ?? 0;
-  if (balance <= 0) return 0;
+  // Key is registered — always bid at least 1 kudos for priority
+  // (anonymous "0000000000" gets no priority, our key does)
+  if (balance <= 0) return 1;
   if (balance >= 2000) return 50;
   if (balance >= 500)  return 15;
   if (balance >= 100)  return 5;
