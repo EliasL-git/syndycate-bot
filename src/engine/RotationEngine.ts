@@ -1,16 +1,18 @@
 /**
  * RotationEngine
  *
- * Owns the key pool. Keys are tagged by provider label ("groq" | "openrouter" | "openai").
+ * Owns the key pool. Keys are tagged by provider label ("groq" | "openrouter" | "openai" | "horde").
  * On each request the LRU (least-recently-used) healthy key is picked.
  * Rate-limited keys are cooldowned — 429 is honoured exactly, other failures use
  * exponential back-off; dead keys (401/403) are removed.
  */
 
+export type ProviderLabel = "groq" | "openrouter" | "openai" | "horde" | "fal";
+
 export interface ApiKeyEntry {
   key: string;
-  provider: "groq" | "openrouter" | "openai";
-  /** Optional custom base URL — set for groq / openrouter so we don't hardcode them */
+  provider: ProviderLabel;
+  /** Optional custom base URL — set for groq / openrouter / horde so we don't hardcode them */
   baseURL?: string;
   /** Default model hint — used in /models fallback guidance, not enforced at runtime */
   model?: string;
@@ -24,9 +26,11 @@ export interface RotationStats {
   healthyKeys: number;
   cooldownKeys: number;
   providerBreakdown: {
-    groq: { total: number; healthy: number };
+    groq:       { total: number; healthy: number };
     openrouter: { total: number; healthy: number };
-    openai: { total: number; healthy: number };
+    openai:     { total: number; healthy: number };
+    horde:      { total: number; healthy: number };
+    fal:        { total: number; healthy: number };
   };
 }
 
@@ -108,26 +112,52 @@ export class KeyRotationEngine {
     }
   }
 
+  /** Reset failure count on successful call. */
+  recordSuccess(entry: ApiKeyEntry): void {
+    entry.failures = 0;
+    entry.cooldownUntil = 0;
+  }
+
+  /** Find and record failure by key string (for clients that only have the key). */
+  recordFailureByKey(key: string, retryAfterSeconds?: number): boolean {
+    const entry = this.keys.get(key);
+    if (!entry) return false;
+    this.recordFailure(entry, retryAfterSeconds);
+    return true;
+  }
+
+  /** Find and record success by key string. */
+  recordSuccessByKey(key: string): boolean {
+    const entry = this.keys.get(key);
+    if (!entry) return false;
+    this.recordSuccess(entry);
+    return true;
+  }
+
   stats(): RotationStats {
     const now = Date.now();
     let healthy = 0, cooldown = 0;
     const groq       = { total: 0, healthy: 0 };
     const openrouter = { total: 0, healthy: 0 };
     const openai     = { total: 0, healthy: 0 };
+    const horde      = { total: 0, healthy: 0 };
+    const fal        = { total: 0, healthy: 0 };
 
     for (const [, e] of this.keys) {
       const h = e.cooldownUntil <= now;
       h ? healthy++ : cooldown++;
       if (e.provider === "groq")       { groq.total++;       if (h) groq.healthy++; }
       else if (e.provider === "openrouter") { openrouter.total++; if (h) openrouter.healthy++; }
-      else                              { openai.total++;     if (h) openai.healthy++; }
+      else if (e.provider === "openai")     { openai.total++;     if (h) openai.healthy++; }
+      else if (e.provider === "horde")      { horde.total++;      if (h) horde.healthy++; }
+      else if (e.provider === "fal")        { fal.total++;        if (h) fal.healthy++; }
     }
 
     return {
       totalKeys: this.keys.size,
       healthyKeys: healthy,
       cooldownKeys: cooldown,
-      providerBreakdown: { groq, openrouter, openai },
+      providerBreakdown: { groq, openrouter, openai, horde, fal },
     };
   }
 }

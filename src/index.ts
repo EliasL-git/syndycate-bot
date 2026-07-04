@@ -1,3 +1,4 @@
+import "dotenv/config";
 import express from "express";
 import { Client, GatewayIntentBits, REST, Routes } from "discord.js";
 import { ai } from "./services/OpenAIService";

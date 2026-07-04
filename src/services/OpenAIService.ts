@@ -19,6 +19,7 @@ const FALLBACK =
   "No free API keys configured yet.\n" +
   "• Groq:      set `GROQ_API_KEYS` (free at console.groq.com)\n" +
   "• OpenRouter: set `OPENROUTER_API_KEYS` (free at openrouter.ai)\n" +
+  "• Fal.ai:    set `FAL_API_KEYS` (free at fal.ai)\n" +
   "Keys are comma or newline separated.\n" +
   "Run `!health` to see pool status.";
 
@@ -57,6 +58,10 @@ const PROVIDER_DEFAULTS: Record<string, { baseURL: string; model: string }> = {
     baseURL: "https://api.openai.com/v1",
     model:  "gpt-4o-mini",
   },
+  fal: {
+    baseURL: "https://fal.run",
+    model:  "fal-ai/flux-pro/v1.1",
+  },
 };
 
 // -------------------------------------------------------------------------
@@ -70,6 +75,8 @@ class FreeAIProvider {
   bootstrap(): { loaded: number; healthy: number } {
     const groq        = keyEngine.loadKeys(process.env.GROQ_API_KEYS       ?? "", "groq");
     const openrouter  = keyEngine.loadKeys(process.env.OPENROUTER_API_KEYS ?? "", "openrouter");
+    const horde       = keyEngine.loadKeys(process.env.HORDE_API_KEYS       ?? "", "horde");
+    const fal         = keyEngine.loadKeys(process.env.FAL_API_KEYS         ?? "", "fal");
     // Optional: allow OPENAI_API_KEYS + OPENAI_BASE_URL for paid overflow
     const openai      = keyEngine.loadKeys(
       process.env.OPENAI_API_KEYS    ?? "",
@@ -77,7 +84,7 @@ class FreeAIProvider {
       process.env.OPENAI_BASE_URL,
       process.env.OPENAI_MODEL,
     );
-    const loaded = groq + openrouter + openai;
+    const loaded = groq + openrouter + horde + fal + openai;
     return { loaded, healthy: keyEngine.stats().healthyKeys };
   }
 
